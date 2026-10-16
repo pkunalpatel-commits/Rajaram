@@ -18,12 +18,6 @@ class ChartScreen extends StatefulWidget {
 class _ChartScreenState extends State<ChartScreen> {
   bool _connecting = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _connectFeed();
-  }
-
   Future<void> _connectFeed() async {
     setState(() => _connecting = true);
     final prefs = await SharedPreferences.getInstance();
@@ -33,7 +27,9 @@ class _ChartScreenState extends State<ChartScreen> {
     if (clientId.isEmpty || token.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please set Client ID & Token in Settings')),
+          const SnackBar(
+            content: Text('Set Client ID & Access Token in Settings first'),
+          ),
         );
       }
       setState(() => _connecting = false);
@@ -54,7 +50,12 @@ class _ChartScreenState extends State<ChartScreen> {
       exchangeSegment: widget.contract.exchangeSegment,
     );
 
-    setState(() => _connecting = false);
+    if (mounted) setState(() => _connecting = false);
+  }
+
+  Future<void> _disconnectFeed() async {
+    await context.read<MarketFeedService>().disconnect();
+    if (mounted) setState(() {});
   }
 
   @override
@@ -70,23 +71,16 @@ class _ChartScreenState extends State<ChartScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.contract.displayName),
+        title: Text(
+          widget.contract.displayName,
+          style: const TextStyle(fontSize: 14),
+        ),
         actions: [
-          if (_connecting)
-            const Padding(
-              padding: EdgeInsets.all(12),
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            )
-          else
-            Icon(
-              feed.isConnected ? Icons.circle : Icons.circle_outlined,
-              color: feed.isConnected ? Colors.greenAccent : Colors.redAccent,
-              size: 14,
-            ),
+          Icon(
+            feed.isConnected ? Icons.circle : Icons.circle_outlined,
+            color: feed.isConnected ? Colors.greenAccent : Colors.redAccent,
+            size: 12,
+          ),
           const SizedBox(width: 12),
         ],
       ),
@@ -95,7 +89,7 @@ class _ChartScreenState extends State<ChartScreen> {
           // Live ticker strip
           Container(
             color: const Color(0xFF121826),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
@@ -107,6 +101,56 @@ class _ChartScreenState extends State<ChartScreen> {
             ),
           ),
 
+          // Connect / Disconnect button
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _connecting
+                    ? null
+                    : (feed.isConnected ? _disconnectFeed : _connectFeed),
+                icon: _connecting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Icon(
+                        feed.isConnected ? Icons.stop : Icons.play_arrow,
+                      ),
+                label: Text(
+                  _connecting
+                      ? 'Connecting…'
+                      : feed.isConnected
+                          ? 'Disconnect Live Feed'
+                          : 'Start Live Connection',
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: feed.isConnected
+                      ? Colors.red.shade700
+                      : const Color(0xFF1565C0),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+          ),
+
+          if (feed.lastError != null && !feed.isConnected)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                feed.lastError!,
+                style: const TextStyle(color: Colors.redAccent, fontSize: 11),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+
           // Chart + OI Profile
           Expanded(
             child: CandleChartWithOiProfile(
@@ -116,27 +160,32 @@ class _ChartScreenState extends State<ChartScreen> {
           ),
 
           // HOIN / LOIN chips
-          if (oi.profile.highOiNodes.isNotEmpty || oi.profile.lowOiNodes.isNotEmpty)
+          if (oi.profile.highOiNodes.isNotEmpty ||
+              oi.profile.lowOiNodes.isNotEmpty)
             Container(
               height: 48,
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 children: [
-                  ...oi.profile.highOiNodes.map((p) => Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: Chip(
-                          label: Text('HOIN ${p.toStringAsFixed(0)}'),
-                          backgroundColor: Colors.red.withOpacity(0.3),
-                        ),
-                      )),
-                  ...oi.profile.lowOiNodes.map((p) => Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: Chip(
-                          label: Text('LOIN ${p.toStringAsFixed(0)}'),
-                          backgroundColor: Colors.blue.withOpacity(0.3),
-                        ),
-                      )),
+                  ...oi.profile.highOiNodes.map(
+                    (p) => Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Chip(
+                        label: Text('HOIN ${p.toStringAsFixed(0)}'),
+                        backgroundColor: Colors.red.withValues(alpha: 0.3),
+                      ),
+                    ),
+                  ),
+                  ...oi.profile.lowOiNodes.map(
+                    (p) => Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Chip(
+                        label: Text('LOIN ${p.toStringAsFixed(0)}'),
+                        backgroundColor: Colors.blue.withValues(alpha: 0.3),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -148,8 +197,11 @@ class _ChartScreenState extends State<ChartScreen> {
   Widget _metric(String label, String value) {
     return Column(
       children: [
-        Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-        Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        Text(label,
+            style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        Text(value,
+            style:
+                const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
       ],
     );
   }
