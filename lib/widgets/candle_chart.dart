@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/oi_profile.dart';
 import '../models/option_contract.dart';
 
-/// Combined candlestick + horizontal OI Profile histogram
+/// Price chart (line) + horizontal OI Profile histogram
 /// Y-axis = Option Premium
 /// Right side = OI bars at each premium bin
 class CandleChartWithOiProfile extends StatelessWidget {
@@ -18,26 +18,31 @@ class CandleChartWithOiProfile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Demo candles (replace with real historical + live data)
-    final demoCandles = _generateDemoCandles();
+    final spots = _generateDemoSpots();
 
     return Row(
       children: [
-        // Main candlestick area
+        // Main price chart
         Expanded(
           flex: 7,
           child: Padding(
             padding: const EdgeInsets.all(8.0),
-            child: CandlestickChart(
-              CandlestickChartData(
-                candlestickSpots: demoCandles,
-                candlestickPainter: DefaultCandlestickPainter(
-                  paintStyle: const CandlestickPaintStyle(
-                    bullColor: Color(0xFF26A69A),
-                    bearColor: Color(0xFFEF5350),
+            child: LineChart(
+              LineChartData(
+                lineBarsData: [
+                  LineChartBarData(
+                    spots: spots,
+                    isCurved: false,
+                    color: const Color(0xFF26A69A),
+                    barWidth: 2,
+                    dotData: const FlDotData(show: false),
+                    belowBarData: BarAreaData(
+                      show: true,
+                      color: const Color(0xFF26A69A).withOpacity(0.15),
+                    ),
                   ),
-                ),
-                gridData: FlGridData(show: true, drawVerticalLine: false),
+                ],
+                gridData: const FlGridData(show: true, drawVerticalLine: false),
                 titlesData: FlTitlesData(
                   leftTitles: AxisTitles(
                     sideTitles: SideTitles(
@@ -49,11 +54,19 @@ class CandleChartWithOiProfile extends StatelessWidget {
                       ),
                     ),
                   ),
-                  bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  bottomTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
+                  topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false),
+                  ),
                 ),
                 borderData: FlBorderData(show: false),
+                minY: spots.map((s) => s.y).reduce((a, b) => a < b ? a : b) - 5,
+                maxY: spots.map((s) => s.y).reduce((a, b) => a > b ? a : b) + 5,
               ),
             ),
           ),
@@ -68,21 +81,11 @@ class CandleChartWithOiProfile extends StatelessWidget {
     );
   }
 
-  List<CandlestickSpot> _generateDemoCandles() {
-    // Placeholder – replace with real data from DhanApi + live feed
+  List<FlSpot> _generateDemoSpots() {
     final base = 120.0;
     return List.generate(40, (i) {
-      final o = base + (i % 7) * 1.5 - 3;
-      final c = o + ((i % 3) - 1) * 2.5;
-      final h = [o, c].reduce((a, b) => a > b ? a : b) + 1.5;
-      final l = [o, c].reduce((a, b) => a < b ? a : b) - 1.5;
-      return CandlestickSpot(
-        x: i.toDouble(),
-        open: o,
-        high: h,
-        low: l,
-        close: c,
-      );
+      final y = base + (i % 7) * 1.5 - 3 + ((i % 3) - 1) * 2.5;
+      return FlSpot(i.toDouble(), y);
     });
   }
 }
@@ -97,7 +100,11 @@ class _OiHistogram extends StatelessWidget {
     final bins = profile.sortedBins;
     if (bins.isEmpty) {
       return const Center(
-        child: Text('OI Profile\n(waiting for ticks)', textAlign: TextAlign.center),
+        child: Text(
+          'OI Profile\n(waiting for ticks)',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
       );
     }
 
@@ -107,7 +114,10 @@ class _OiHistogram extends StatelessWidget {
       children: [
         const Padding(
           padding: EdgeInsets.all(4),
-          child: Text('OI Profile', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+          child: Text(
+            'OI Profile',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+          ),
         ),
         Expanded(
           child: ListView.builder(
@@ -135,7 +145,8 @@ class _OiHistogram extends StatelessWidget {
                               : isHoin
                                   ? Colors.redAccent
                                   : Colors.grey,
-                          fontWeight: isPoc ? FontWeight.bold : FontWeight.normal,
+                          fontWeight:
+                              isPoc ? FontWeight.bold : FontWeight.normal,
                         ),
                       ),
                     ),
