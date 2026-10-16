@@ -1,11 +1,24 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
 
-/// Live market data via Dhan REST API (same approach as kunalapk).
-/// Avoids WebSocket api-feed.dhan.co which fails DNS on many networks.
+/// DhanHQ Live Market Feed — WebSocket ONLY
+/// Docs: https://dhanhq.co/docs/v2/live-market-feed/
+///
+/// URL:
+///   wss://api-feed.dhan.co?version=2&token={ACCESS_TOKEN}&clientId={CLIENT_ID}&authType=2
+///
+/// Subscribe (JSON):
+///   RequestCode 15 = Ticker, 17 = Quote, 21 = Full (LTP+OI+Depth)
+///
+/// Responses are BINARY (little-endian). Header = 8 bytes.
 class MarketFeedService extends ChangeNotifier {
+  WebSocketChannel? _channel;
+  StreamSubscription? _sub;
+
   double? ltp;
   double? dayOpen;
   double? dayHigh;
@@ -20,175 +33,194 @@ class MarketFeedService extends ChangeNotifier {
 
   void Function(double ltp, int? oi)? onTick;
 
-  Timer? _pollTimer;
-  String? _clientId;
-  String? _accessToken;
-  String? _securityId;
-  String? _exchangeSegment;
-
+  /// Connect WebSocket (official Dhan v2 Data API feed)
   Future<void> connect({
     required String clientId,
     required String accessToken,
     required String securityId,
-    required String exchangeSegment,
+    required String exchangeSegment, // e.g. NSE_FNO
   }) async {
     await disconnect();
-
-    _clientId = clientId;
-    _accessToken = accessToken;
-    _securityId = securityId;
-    _exchangeSegment = exchangeSegment;
-
-    final ok = await _fetchQuote();
-    if (!ok) {
-      isConnected = false;
-      notifyListeners();
-      return;
-    }
-
-    isConnected = true;
     lastError = null;
     notifyListeners();
 
-    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
-      await _fetchQuote();
-    });
-  }
-
-  Future<bool> _fetchQuote() async {
-    if (_clientId == null || _accessToken == null || _securityId == null) {
-      return false;
-    }
+    // Official URL from https://dhanhq.co/docs/v2/live-market-feed/
+    final uri = Uri.parse(
+      'wss://api-feed.dhan.co'
+      '?version=2'
+      '&token=${Uri.encodeComponent(accessToken)}'
+      '&clientId=${Uri.encodeComponent(clientId)}'
+      '&authType=2',
+    );
 
     try {
-      // Try LTP endpoint first (lighter), then full quote
-      final endpoints = [
-        'https://api.dhan.co/v2/marketfeed/ltp',
-        'https://api.dhan.co/v2/marketfeed/quote',
-        'https://api.dhan.co/v2/marketfeed/ohlc',
-      ];
+      debugPrint('WS connecting: ${uri.toString().replaceAll(accessToken, "***")}');
+      _channel = IOWebSocketChannel.connect(
+        uri,
+        pingInterval: const Duration(seconds: 10), // respond to server ping
+      );
 
-      final body = jsonEncode({
-        _exchangeSegment ?? 'NSE_FNO': [int.tryParse(_securityId!) ?? _securityId],
+      // Subscribe AFTER connection opens — Full mode (RequestCode 21) has OI
+      // SDK: Ticker=15, Quote=17, Full=21
+      final subscribeMsg = jsonEncode({
+        'RequestCode': 21, // Full packet → LTP + OI + depth
+        'InstrumentCount': 1,
+        'InstrumentList': [
+          {
+            'ExchangeSegment': exchangeSegment,
+            'SecurityId': securityId,
+          }
+        ],
       });
 
-      http.Response? res;
-      for (final url in endpoints) {
-        try {
-          res = await http
-              .post(
-                Uri.parse(url),
-                headers: {
-                  'Content-Type': 'application/json',
-                  'access-token': _accessToken!,
-                  'client-id': _clientId!,
-                },
-                body: body,
-              )
-              .timeout(const Duration(seconds: 20));
-          if (res.statusCode == 200) break;
-        } catch (e) {
-          debugPrint('Endpoint $url failed: $e');
-        }
-      }
+      _channel!.sink.add(subscribeMsg);
+      debugPrint('WS subscribe sent: $subscribeMsg');
 
-      if (res == null || res.statusCode != 200) {
-        lastError =
-            'Quote failed HTTP ${res?.statusCode}: ${res?.body.substring(0, (res?.body.length ?? 0).clamp(0, 120)) ?? "no response"}';
-        notifyListeners();
-        return false;
-      }
-
-      final json = jsonDecode(res.body) as Map<String, dynamic>;
-      final data = json['data'] as Map<String, dynamic>? ?? json;
-
-      Map<String, dynamic>? quote;
-      // Shape: data[segment][securityId] = {...}
-      for (final entry in data.entries) {
-        final v = entry.value;
-        if (v is Map) {
-          if (v.containsKey(_securityId)) {
-            final q = v[_securityId];
-            if (q is Map) {
-              quote = Map<String, dynamic>.from(q);
-              break;
-            }
-          }
-          // single instrument nested
-          if (v.containsKey('last_price') || v.containsKey('LTP') || v.containsKey('last_price')) {
-            quote = Map<String, dynamic>.from(v);
-            break;
-          }
-          // first child
-          for (final child in v.values) {
-            if (child is Map &&
-                (child.containsKey('last_price') ||
-                    child.containsKey('LTP') ||
-                    child.containsKey('lastPrice'))) {
-              quote = Map<String, dynamic>.from(child);
-              break;
-            }
-          }
-        }
-      }
-
-      if (quote == null &&
-          (data.containsKey('last_price') || data.containsKey('LTP'))) {
-        quote = data;
-      }
-
-      if (quote == null) {
-        lastError = 'Parse error: ${res.body.substring(0, res.body.length.clamp(0, 200))}';
-        notifyListeners();
-        return false;
-      }
-
-      final newLtp = _toDouble(
-          quote['last_price'] ?? quote['LTP'] ?? quote['lastPrice'] ?? quote['ltp']);
-      final newOi = _toInt(
-          quote['oi'] ?? quote['OI'] ?? quote['open_interest'] ?? quote['openInterest']);
-
-      if (newLtp != null) {
-        ltp = newLtp;
-        oi = newOi;
-        volume = _toDouble(quote['volume'] ?? quote['Volume']);
-        dayOpen = _toDouble(quote['open'] ?? quote['Open']);
-        dayHigh = _toDouble(quote['high'] ?? quote['High']);
-        dayLow = _toDouble(quote['low'] ?? quote['Low']);
-        dayClose = _toDouble(quote['close'] ?? quote['Close']);
-        lastError = null;
-        onTick?.call(newLtp, newOi);
-        notifyListeners();
-        return true;
-      }
-
-      lastError = 'No LTP in response';
+      isConnected = true;
       notifyListeners();
-      return false;
+
+      _sub = _channel!.stream.listen(
+        (data) {
+          if (data is List<int>) {
+            _parseBinary(Uint8List.fromList(data));
+          } else if (data is String) {
+            debugPrint('WS text: $data');
+            // Some servers send error as text
+            if (data.toLowerCase().contains('error') ||
+                data.toLowerCase().contains('invalid')) {
+              lastError = data;
+              notifyListeners();
+            }
+          }
+        },
+        onError: (e) {
+          lastError = e.toString();
+          isConnected = false;
+          debugPrint('WS error: $e');
+          notifyListeners();
+        },
+        onDone: () {
+          isConnected = false;
+          lastError ??= 'WebSocket closed by server';
+          debugPrint('WS closed');
+          notifyListeners();
+        },
+        cancelOnError: false,
+      );
     } catch (e) {
       lastError = e.toString();
-      debugPrint('Quote error: $e');
+      isConnected = false;
+      debugPrint('WS connect failed: $e');
       notifyListeners();
-      return false;
     }
   }
 
-  double? _toDouble(dynamic v) {
-    if (v == null) return null;
-    if (v is num) return v.toDouble();
-    return double.tryParse(v.toString());
-  }
+  /// Binary parser — Little Endian (official DhanHQ docs)
+  /// Header (8 bytes):
+  ///   [0]     = feed response code
+  ///   [1-2]   = message length (int16)
+  ///   [3]     = exchange segment
+  ///   [4-7]   = security id (int32)
+  void _parseBinary(Uint8List bytes) {
+    if (bytes.length < 9) return;
 
-  int? _toInt(dynamic v) {
-    if (v == null) return null;
-    if (v is int) return v;
-    if (v is num) return v.toInt();
-    return int.tryParse(v.toString());
+    final bd = ByteData.sublistView(bytes);
+    final code = bytes[0];
+
+    try {
+      switch (code) {
+        case 2: // Ticker
+          if (bytes.length >= 17) {
+            ltp = bd.getFloat32(9, Endian.little);
+            onTick?.call(ltp!, oi);
+            notifyListeners();
+          }
+          break;
+
+        case 4: // Quote
+          if (bytes.length >= 51) {
+            ltp = bd.getFloat32(9, Endian.little);
+            volume = bd.getInt32(23, Endian.little).toDouble();
+            dayOpen = bd.getFloat32(35, Endian.little);
+            dayClose = bd.getFloat32(39, Endian.little);
+            dayHigh = bd.getFloat32(43, Endian.little);
+            dayLow = bd.getFloat32(47, Endian.little);
+            onTick?.call(ltp!, oi);
+            notifyListeners();
+          }
+          break;
+
+        case 5: // OI packet (with Quote subscription)
+          if (bytes.length >= 13) {
+            oi = bd.getInt32(9, Endian.little);
+            if (ltp != null) onTick?.call(ltp!, oi);
+            notifyListeners();
+          }
+          break;
+
+        case 6: // Prev close
+          if (bytes.length >= 17) {
+            // prev close float32 @ 9, prev OI int32 @ 13
+          }
+          break;
+
+        case 8: // Full packet (LTP + OI + depth)
+          // Docs Full packet offsets:
+          // 9-12   LTP float32
+          // 13-14  LTQ int16
+          // 15-18  LTT int32
+          // 19-22  ATP float32
+          // 23-26  Volume int32
+          // 27-30  Total Sell int32
+          // 31-34  Total Buy int32
+          // 35-38  OI int32
+          // 39-42  OI day high int32
+          // 43-46  OI day low int32
+          // 47-50  Day Open float32
+          // 51-54  Day Close float32
+          // 55-58  Day High float32
+          // 59-62  Day Low float32
+          if (bytes.length >= 63) {
+            ltp = bd.getFloat32(9, Endian.little);
+            volume = bd.getInt32(23, Endian.little).toDouble();
+            oi = bd.getInt32(35, Endian.little);
+            oiDayHigh = bd.getInt32(39, Endian.little);
+            oiDayLow = bd.getInt32(43, Endian.little);
+            dayOpen = bd.getFloat32(47, Endian.little);
+            dayClose = bd.getFloat32(51, Endian.little);
+            dayHigh = bd.getFloat32(55, Endian.little);
+            dayLow = bd.getFloat32(59, Endian.little);
+            onTick?.call(ltp!, oi);
+            notifyListeners();
+          }
+          break;
+
+        case 50: // Disconnect
+          if (bytes.length >= 11) {
+            final reason = bd.getInt16(9, Endian.little);
+            lastError = 'Server disconnect code $reason';
+            isConnected = false;
+            notifyListeners();
+          }
+          break;
+
+        default:
+          debugPrint('WS unknown code=$code len=${bytes.length}');
+      }
+    } catch (e) {
+      debugPrint('Binary parse error code=$code: $e');
+    }
   }
 
   Future<void> disconnect() async {
-    _pollTimer?.cancel();
-    _pollTimer = null;
+    try {
+      // Official disconnect request
+      _channel?.sink.add(jsonEncode({'RequestCode': 12}));
+    } catch (_) {}
+    await _sub?.cancel();
+    await _channel?.sink.close();
+    _channel = null;
+    _sub = null;
     isConnected = false;
     notifyListeners();
   }
