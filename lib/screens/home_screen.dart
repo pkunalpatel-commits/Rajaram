@@ -244,7 +244,7 @@ class _ConnectionCard extends StatelessWidget {
         raw.contains('No address associated')) {
       return 'No internet / DNS error.\n'
           'Check Wi‑Fi or mobile data, then tap Start Connection again.\n'
-          'Tip: open Chrome and try images.dhan.co';
+          'Tip: open Chrome and try api.dhan.co';
     }
     if (raw.length > 180) return '${raw.substring(0, 180)}…';
     return raw;
