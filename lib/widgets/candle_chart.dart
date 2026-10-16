@@ -3,9 +3,8 @@ import 'package:flutter/material.dart';
 import '../models/oi_profile.dart';
 import '../models/option_contract.dart';
 
-/// Price chart (line) + horizontal OI Profile histogram
-/// Y-axis = Option Premium
-/// Right side = OI bars at each premium bin
+/// Price chart + horizontal OI Profile histogram.
+/// Y-axis = Option Premium; right panel = OI at each premium bin.
 class CandleChartWithOiProfile extends StatelessWidget {
   final OptionContract contract;
   final OiProfile profile;
@@ -19,10 +18,11 @@ class CandleChartWithOiProfile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final spots = _generateDemoSpots();
+    final minY = spots.map((s) => s.y).reduce((a, b) => a < b ? a : b) - 5;
+    final maxY = spots.map((s) => s.y).reduce((a, b) => a > b ? a : b) + 5;
 
     return Row(
       children: [
-        // Main price chart
         Expanded(
           flex: 7,
           child: Padding(
@@ -38,7 +38,7 @@ class CandleChartWithOiProfile extends StatelessWidget {
                     dotData: const FlDotData(show: false),
                     belowBarData: BarAreaData(
                       show: true,
-                      color: const Color(0xFF26A69A).withOpacity(0.15),
+                      color: const Color(0xFF26A69A).withValues(alpha: 0.15),
                     ),
                   ),
                 ],
@@ -65,14 +65,12 @@ class CandleChartWithOiProfile extends StatelessWidget {
                   ),
                 ),
                 borderData: FlBorderData(show: false),
-                minY: spots.map((s) => s.y).reduce((a, b) => a < b ? a : b) - 5,
-                maxY: spots.map((s) => s.y).reduce((a, b) => a > b ? a : b) + 5,
+                minY: minY,
+                maxY: maxY,
               ),
             ),
           ),
         ),
-
-        // Horizontal OI Profile (right side)
         Expanded(
           flex: 3,
           child: _OiHistogram(profile: profile),
@@ -82,7 +80,7 @@ class CandleChartWithOiProfile extends StatelessWidget {
   }
 
   List<FlSpot> _generateDemoSpots() {
-    final base = 120.0;
+    const base = 120.0;
     return List.generate(40, (i) {
       final y = base + (i % 7) * 1.5 - 3 + ((i % 3) - 1) * 2.5;
       return FlSpot(i.toDouble(), y);
@@ -158,10 +156,10 @@ class _OiHistogram extends StatelessWidget {
                           height: 12,
                           decoration: BoxDecoration(
                             color: isPoc
-                                ? Colors.amber.withOpacity(0.8)
+                                ? Colors.amber.withValues(alpha: 0.8)
                                 : isHoin
-                                    ? Colors.redAccent.withOpacity(0.7)
-                                    : Colors.blueAccent.withOpacity(0.5),
+                                    ? Colors.redAccent.withValues(alpha: 0.7)
+                                    : Colors.blueAccent.withValues(alpha: 0.5),
                             borderRadius: BorderRadius.circular(2),
                           ),
                         ),
