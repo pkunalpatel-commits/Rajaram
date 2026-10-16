@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/option_contract.dart';
+import '../utils/app_log.dart';
 
 /// Instrument loader — does NOT use images.dhan.co (DNS fails on many phones).
 /// Uses same approach as kunalapk: hardcoded underlyings + api.dhan.co option chain.
@@ -116,9 +117,9 @@ class ScripMasterService extends ChangeNotifier {
       _rows = allRows;
       usedOfflineFallback = false;
       error = null;
-      debugPrint('Loaded ${_rows.length} contracts from api.dhan.co');
+      AppLog.i('Loaded ${_rows.length} contracts from api.dhan.co');
     } catch (e) {
-      debugPrint('Scrip load error: $e');
+      AppLog.e('Scrip load error: $e');
       error = e.toString();
       _rows = _demoRows();
       usedOfflineFallback = true;

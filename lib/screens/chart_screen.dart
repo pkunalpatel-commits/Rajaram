@@ -5,6 +5,8 @@ import '../models/option_contract.dart';
 import '../services/market_feed.dart';
 import '../services/oi_profile_service.dart';
 import '../widgets/candle_chart.dart';
+import 'log_screen.dart';
+import '../utils/app_log.dart';
 
 class ChartScreen extends StatefulWidget {
   final OptionContract contract;
@@ -43,6 +45,7 @@ class _ChartScreenState extends State<ChartScreen> {
       oiService.onLiveTick(ltp, oi);
     };
 
+    AppLog.i('Chart Start Live for ${widget.contract.securityId}');
     await feed.connect(
       clientId: clientId,
       accessToken: token,
@@ -76,12 +79,20 @@ class _ChartScreenState extends State<ChartScreen> {
           style: const TextStyle(fontSize: 14),
         ),
         actions: [
+          IconButton(
+            tooltip: 'Log',
+            icon: const Icon(Icons.article_outlined, size: 20),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const LogScreen()),
+            ),
+          ),
           Icon(
             feed.isConnected ? Icons.circle : Icons.circle_outlined,
             color: feed.isConnected ? Colors.greenAccent : Colors.redAccent,
             size: 12,
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 8),
         ],
       ),
       body: Column(
