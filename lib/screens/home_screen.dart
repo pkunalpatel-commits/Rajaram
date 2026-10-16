@@ -20,6 +20,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final scrip = context.watch<ScripMasterService>();
     final hasData = scrip.rows.isNotEmpty;
+    final isDemo = scrip.usedOfflineFallback;
 
     return Scaffold(
       appBar: AppBar(
@@ -43,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _ConnectionCard(
               isLoading: scrip.isLoading,
               hasData: hasData,
+              isDemo: scrip.usedOfflineFallback,
               error: scrip.error,
               instrumentCount: scrip.rows.length,
               onConnect: () => context.read<ScripMasterService>().load(),
@@ -129,6 +131,7 @@ class _HomeScreenState extends State<HomeScreen> {
 class _ConnectionCard extends StatelessWidget {
   final bool isLoading;
   final bool hasData;
+  final bool isDemo;
   final String? error;
   final int instrumentCount;
   final VoidCallback onConnect;
@@ -136,6 +139,7 @@ class _ConnectionCard extends StatelessWidget {
   const _ConnectionCard({
     required this.isLoading,
     required this.hasData,
+    this.isDemo = false,
     required this.error,
     required this.instrumentCount,
     required this.onConnect,
@@ -151,6 +155,10 @@ class _ConnectionCard extends StatelessWidget {
       statusColor = Colors.orange;
       statusText = 'Connecting to Dhan…';
       statusIcon = Icons.sync;
+    } else if (hasData && isDemo) {
+      statusColor = Colors.amber;
+      statusText = 'Demo mode · $instrumentCount sample contracts';
+      statusIcon = Icons.warning_amber;
     } else if (hasData) {
       statusColor = Colors.greenAccent;
       statusText = 'Connected · $instrumentCount instruments';

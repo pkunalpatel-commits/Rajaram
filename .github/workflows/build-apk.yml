@@ -31,6 +31,19 @@ jobs:
           rm -rf android
           flutter create . --platforms=android --project-name dhan_option_oi_chart
 
+      - name: Ensure INTERNET permission + network security
+        run: |
+          # INTERNET is usually added by flutter create; force it
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          if ! grep -q 'android.permission.INTERNET' "$MANIFEST"; then
+            sed -i 's|<manifest |<manifest |\n    <uses-permission android:name="android.permission.INTERNET"/>\n|' "$MANIFEST" || true
+          fi
+          # Allow cleartext just in case intermediate redirects
+          if [ -f android/app/src/main/AndroidManifest.xml ]; then
+            sed -i 's/<application/<application android:usesCleartextTraffic="true"/' android/app/src/main/AndroidManifest.xml || true
+          fi
+          cat android/app/src/main/AndroidManifest.xml | head -25
+
       - name: Install dependencies
         run: flutter pub get
 
